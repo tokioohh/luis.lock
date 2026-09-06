@@ -1,4 +1,4 @@
-# luis.lock
+# omarchy-clean-lock
 
 A minimal, clean lock screen plugin for [Omarchy](https://github.com/basecamp/omarchy) with a focus on typography and visual hierarchy.
 
@@ -17,20 +17,20 @@ A minimal, clean lock screen plugin for [Omarchy](https://github.com/basecamp/om
 
 ## Installation
 
-1. Clone the built-in lock plugin:
+1. Add the plugin from git:
 
 ```bash
-omarchy plugin clone omarchy.lock
+omarchy plugin add https://github.com/tokioohh/omarchy-clean-lock --enable
 ```
 
-2. This creates the plugin at `~/.config/omarchy/plugins/luis.lock/`.
+2. This creates the plugin at `~/.config/omarchy/plugins/omarchy-clean-lock/`.
 
 3. Edit `~/.config/omarchy/shell.json` to enable the plugin:
 
 ```json
 {
   "plugins": [
-    { "id": "luis.lock" }
+    { "id": "omarchy-clean-lock" }
   ],
   "disabledPlugins": [
     "omarchy.lock"
@@ -47,7 +47,7 @@ pkill quickshell
 ## Structure
 
 ```
-luis.lock/
+omarchy-clean-lock/
 ├── LockView.qml      # UI layout and styling
 ├── Service.qml       # Lock logic, PAM auth, battery/network status
 ├── manifest.json     # Plugin metadata

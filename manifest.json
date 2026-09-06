@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
-  "id": "luis.lock",
-  "name": "My Lock Screen",
+  "id": "omarchy-clean-lock",
+  "name": "Clean Lock Screen",
   "version": "1.0.0",
   "author": "Omarchy",
   "description": "Quickshell session lock with separate password and fingerprint PAM flows.",
