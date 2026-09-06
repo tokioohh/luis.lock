@@ -4,6 +4,8 @@ A minimal, clean lock screen plugin for [Omarchy](https://github.com/basecamp/om
 
 ![Lock Screen Preview](screenshots/preview.png)
 
+![Lock Screen Preview 2](screenshots/preview-2.png)
+
 ## Features
 
 - **Inter font** throughout for a modern, clean look
@@ -51,6 +53,7 @@ luis.lock/
 ├── manifest.json     # Plugin metadata
 └── screenshots/
     └── preview.png   # Preview screenshot
+        preview-2.png # Additional preview screenshot
 ```
 
 ## Customization
