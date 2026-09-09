@@ -104,7 +104,7 @@ Item {
       source: root.loadBackground ? root.fileUrl(root.backgroundPath) : ""
       fillMode: Image.PreserveAspectCrop
       asynchronous: true
-      cache: false
+      cache: true
       sourceSize.width: width
       sourceSize.height: height
     }

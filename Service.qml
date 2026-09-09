@@ -1,7 +1,9 @@
 import QtQuick
 import Quickshell
 import Quickshell.Io
+import Quickshell.Networking
 import Quickshell.Services.Pam
+import Quickshell.Services.UPower
 import Quickshell.Wayland
 import qs.Commons
 
@@ -11,8 +13,9 @@ Item {
   property var shell: null
   property string omarchyPath: ""
 
-  readonly property string home: Quickshell.env("HOME")
-  readonly property string stateHome: home + "/.local/state"
+  readonly property string home: Quickshell.env("HOME") || ""
+  readonly property string stateHome: Quickshell.env("XDG_STATE_HOME") || (home + "/.local/state")
+  readonly property string omarchyRoot: omarchyPath || Quickshell.env("OMARCHY_PATH") || ""
   readonly property string userName: Quickshell.env("USER") || Quickshell.env("LOGNAME")
   readonly property string currentBackgroundLink: stateHome + "/omarchy/current/background"
 
@@ -29,9 +32,6 @@ Item {
   property int failedAttempts: 0
   property string backgroundPath: ""
   property int backgroundVersion: 0
-  property string batteryLevel: "--"
-  property string batteryState: ""
-  property string wifiName: "Wi-Fi"
   property string currentTime: Qt.formatTime(new Date(), "HH:mm")
   property string currentDate: Qt.formatDate(new Date(), "dddd, d MMMM")
   property string currentDateKey: Qt.formatDate(new Date(), "yyyy-MM-dd")
@@ -43,6 +43,16 @@ Item {
   readonly property bool locked: lockRequested || sessionLock.locked || sessionLock.secure
   readonly property bool authenticating: authenticatingPassword || fingerprintAuthenticating
   readonly property bool statusActive: lockRequested || previewVisible
+  readonly property var batteryDevice: UPower.displayDevice
+  readonly property var networkDevices: Networking.devices ? Networking.devices.values : []
+  readonly property var wifiDevice: findNetworkDevice(DeviceType.Wifi)
+  readonly property var wifiNetworks: wifiDevice && wifiDevice.networks ? wifiDevice.networks.values : []
+  readonly property var connectedWifiNetwork: findConnectedWifiNetwork()
+  readonly property string batteryLevel: formatBatteryLevel()
+  readonly property string batteryState: formatBatteryState()
+  readonly property string wifiName: connectedWifiNetwork && connectedWifiNetwork.name
+    ? connectedWifiNetwork.name
+    : "Sin conexión"
 
   function realScreenCount() {
     var screens = Quickshell.screens || []
@@ -58,6 +68,46 @@ Item {
 
   function hasRealScreen() {
     return realScreenCount() > 0
+  }
+
+  function omarchyCommand(name) {
+    return omarchyRoot ? omarchyRoot + "/bin/" + name : name
+  }
+
+  function findNetworkDevice(type) {
+    var devices = networkDevices || []
+    var fallback = null
+
+    for (var i = 0; i < devices.length; i++) {
+      var device = devices[i]
+      if (!device || device.type !== type) continue
+      if (device.connected) return device
+      if (!fallback) fallback = device
+    }
+
+    return fallback
+  }
+
+  function findConnectedWifiNetwork() {
+    var networks = wifiNetworks || []
+    for (var i = 0; i < networks.length; i++) {
+      if (networks[i] && networks[i].connected) return networks[i]
+    }
+    return null
+  }
+
+  function formatBatteryLevel() {
+    var device = batteryDevice
+    if (!device || !device.isPresent || !isFinite(device.percentage)) return "--"
+    return Math.round(device.percentage) + "%"
+  }
+
+  function formatBatteryState() {
+    var device = batteryDevice
+    if (!device || !device.isPresent) return ""
+    return device.state === UPowerDeviceState.Charging || device.state === UPowerDeviceState.PendingCharge
+      ? "charging"
+      : ""
   }
 
   function queueSessionLock() {
@@ -114,11 +164,6 @@ Item {
     if (!fingerprintCheckProc.running) fingerprintCheckProc.running = true
   }
 
-  function refreshStatus() {
-    if (!batteryProcess.running) batteryProcess.running = true
-    if (!networkProcess.running) networkProcess.running = true
-  }
-
   function refreshClock() {
     var now = new Date()
     currentTime = Qt.formatTime(now, "HH:mm")
@@ -127,21 +172,9 @@ Item {
       currentDateKey = dateKey
       currentDate = Qt.formatDate(now, "dddd, d MMMM")
     }
-  }
 
-  function updateBattery(output) {
-    var lines = String(output || "").split("\n")
-    for (var i = 0; i < lines.length; i++) {
-      var parts = lines[i].split("\t")
-      if (parts.length < 2) continue
-      if (parts[0] === "percentage") batteryLevel = parts[1]
-      if (parts[0] === "state") batteryState = parts[1]
-    }
-  }
-
-  function updateNetwork(output) {
-    var parts = String(output || "").trim().split("\t")
-    wifiName = parts.length >= 2 && parts[0] === "wifi" ? (parts[1] || "Wi-Fi") : "Sin conexión"
+    clockRefreshTimer.interval = 60000 - (Date.now() % 60000)
+    clockRefreshTimer.restart()
   }
 
   function logEvent(event) {
@@ -177,7 +210,6 @@ Item {
     Qt.callLater(function() {
       root.refreshBackground()
       root.refreshFingerprintStatus()
-      root.refreshStatus()
     })
 
     return true
@@ -430,24 +462,6 @@ Item {
   }
 
   Process {
-    id: batteryProcess
-    command: ["omarchy-battery-status", "--shell"]
-    stdout: StdioCollector {
-      waitForEnd: true
-      onStreamFinished: root.updateBattery(text)
-    }
-  }
-
-  Process {
-    id: networkProcess
-    command: ["omarchy-network-status"]
-    stdout: StdioCollector {
-      waitForEnd: true
-      onStreamFinished: root.updateNetwork(text)
-    }
-  }
-
-  Process {
     id: fingerprintCheckProc
     command: ["bash", "-c", "if [[ -f /etc/pam.d/omarchy-lock-fingerprint ]] && command -v fprintd-list >/dev/null 2>&1 && fprintd-list \"$USER\" 2>/dev/null | grep -qi finger; then echo yes; else echo no; fi"]
     stdout: StdioCollector { id: fingerprintCheckStdout; waitForEnd: true }
@@ -460,7 +474,7 @@ Item {
 
   Process {
     id: strandedLockCheckProc
-    command: ["omarchy-hyprland-session-locked"]
+    command: [root.omarchyCommand("omarchy-hyprland-session-locked")]
     onExited: function(exitCode) {
       // No output to read the lock off yet.
       if (exitCode === 2) return
@@ -475,7 +489,7 @@ Item {
 
   Process {
     id: wakeProcess
-    command: ["omarchy-system-wake"]
+    command: [root.omarchyCommand("omarchy-system-wake")]
   }
 
   Timer {
@@ -510,18 +524,9 @@ Item {
   }
 
   Timer {
-    id: statusRefreshTimer
-    interval: 30000
-    repeat: true
-    running: root.statusActive
-    triggeredOnStart: true
-    onTriggered: root.refreshStatus()
-  }
-
-  Timer {
     id: clockRefreshTimer
-    interval: 1000
-    repeat: true
+    interval: 60000
+    repeat: false
     running: root.statusActive
     triggeredOnStart: true
     onTriggered: root.refreshClock()
@@ -580,7 +585,6 @@ Item {
   onStatusActiveChanged: {
     if (statusActive) {
       refreshClock()
-      refreshStatus()
     }
   }
 
