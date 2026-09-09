@@ -29,6 +29,12 @@ Item {
   property int failedAttempts: 0
   property string backgroundPath: ""
   property int backgroundVersion: 0
+  property string batteryLevel: "--"
+  property string batteryState: ""
+  property string wifiName: "Wi-Fi"
+  property string currentTime: Qt.formatTime(new Date(), "HH:mm")
+  property string currentDate: Qt.formatDate(new Date(), "dddd, d MMMM")
+  property string currentDateKey: Qt.formatDate(new Date(), "yyyy-MM-dd")
   property string lastEvent: "init"
   property string lastEventAt: ""
   property bool strandedLock: false
@@ -36,6 +42,7 @@ Item {
 
   readonly property bool locked: lockRequested || sessionLock.locked || sessionLock.secure
   readonly property bool authenticating: authenticatingPassword || fingerprintAuthenticating
+  readonly property bool statusActive: lockRequested || previewVisible
 
   function realScreenCount() {
     var screens = Quickshell.screens || []
@@ -107,6 +114,36 @@ Item {
     if (!fingerprintCheckProc.running) fingerprintCheckProc.running = true
   }
 
+  function refreshStatus() {
+    if (!batteryProcess.running) batteryProcess.running = true
+    if (!networkProcess.running) networkProcess.running = true
+  }
+
+  function refreshClock() {
+    var now = new Date()
+    currentTime = Qt.formatTime(now, "HH:mm")
+    var dateKey = Qt.formatDate(now, "yyyy-MM-dd")
+    if (dateKey !== currentDateKey) {
+      currentDateKey = dateKey
+      currentDate = Qt.formatDate(now, "dddd, d MMMM")
+    }
+  }
+
+  function updateBattery(output) {
+    var lines = String(output || "").split("\n")
+    for (var i = 0; i < lines.length; i++) {
+      var parts = lines[i].split("\t")
+      if (parts.length < 2) continue
+      if (parts[0] === "percentage") batteryLevel = parts[1]
+      if (parts[0] === "state") batteryState = parts[1]
+    }
+  }
+
+  function updateNetwork(output) {
+    var parts = String(output || "").trim().split("\t")
+    wifiName = parts.length >= 2 && parts[0] === "wifi" ? (parts[1] || "Wi-Fi") : "Sin conexión"
+  }
+
   function logEvent(event) {
     lastEvent = event
     lastEventAt = new Date().toISOString()
@@ -140,6 +177,7 @@ Item {
     Qt.callLater(function() {
       root.refreshBackground()
       root.refreshFingerprintStatus()
+      root.refreshStatus()
     })
 
     return true
@@ -165,7 +203,10 @@ Item {
   }
 
   function runWake() {
-    if (!wakeProcess.running) wakeProcess.running = true
+    if (!wakeProcess.running && !wakeCooldownTimer.running) {
+      wakeProcess.running = true
+      wakeCooldownTimer.restart()
+    }
     if (lockRequested) armBlankTimer()
   }
 
@@ -175,7 +216,7 @@ Item {
 
   function submitPassword(value) {
     var password = String(value || "")
-    if (!lockRequested || authenticatingPassword || password.length === 0) return
+    if (!lockRequested || !sessionLock.secure || authenticatingPassword || password.length === 0) return
 
     runWake()
     pendingPassword = password
@@ -196,7 +237,7 @@ Item {
   }
 
   function handlePasswordFailure() {
-    if (!lockRequested) return
+    if (!lockRequested || (!authenticatingPassword && pendingPassword.length === 0)) return
 
     authenticatingPassword = false
     enteredPassword = ""
@@ -273,12 +314,17 @@ Item {
         fingerprintConfigured: root.fingerprintConfigured
         authenticatingPassword: root.authenticatingPassword
         failureMessage: root.failureMessage
-         failedAttempts: root.failedAttempts
-         inputEnabled: root.lockRequested
-         loadBackground: root.locked
-         passwordText: root.enteredPassword
-         userName: root.userName
-         onPasswordTextEdited: function(password) { root.enteredPassword = password }
+        failedAttempts: root.failedAttempts
+        inputEnabled: root.lockRequested && sessionLock.secure
+        loadBackground: root.locked
+        passwordText: root.enteredPassword
+        userName: root.userName
+        batteryLevel: root.batteryLevel
+        batteryState: root.batteryState
+        wifiName: root.wifiName
+        currentTime: root.currentTime
+        currentDate: root.currentDate
+        onPasswordTextEdited: function(password) { root.enteredPassword = password }
         onSubmitPassword: function(password) { root.submitPassword(password) }
         onClearFailureRequested: root.failureMessage = ""
         onWakeRequested: root.runWake()
@@ -304,12 +350,17 @@ Item {
       fingerprintConfigured: root.fingerprintConfigured
       authenticatingPassword: false
       failureMessage: ""
-       failedAttempts: 0
-       inputEnabled: false
-       loadBackground: root.previewVisible
-       passwordText: ""
-       userName: root.userName
-     }
+      failedAttempts: 0
+      inputEnabled: false
+      loadBackground: root.previewVisible
+      passwordText: ""
+      userName: root.userName
+      batteryLevel: root.batteryLevel
+      batteryState: root.batteryState
+      wifiName: root.wifiName
+      currentTime: root.currentTime
+      currentDate: root.currentDate
+    }
 
     MouseArea {
       anchors.fill: parent
@@ -327,10 +378,11 @@ Item {
     onPamMessage: root.respondToPasswordPrompt()
 
     onCompleted: function(result) {
-      root.authenticatingPassword = false
-      root.pendingPassword = ""
-
-      if (!root.lockRequested) return
+      if (!root.lockRequested) {
+        root.authenticatingPassword = false
+        root.pendingPassword = ""
+        return
+      }
       if (result === PamResult.Success) root.finishUnlock()
       else root.handlePasswordFailure()
     }
@@ -378,6 +430,24 @@ Item {
   }
 
   Process {
+    id: batteryProcess
+    command: ["omarchy-battery-status", "--shell"]
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: root.updateBattery(text)
+    }
+  }
+
+  Process {
+    id: networkProcess
+    command: ["omarchy-network-status"]
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: root.updateNetwork(text)
+    }
+  }
+
+  Process {
     id: fingerprintCheckProc
     command: ["bash", "-c", "if [[ -f /etc/pam.d/omarchy-lock-fingerprint ]] && command -v fprintd-list >/dev/null 2>&1 && fprintd-list \"$USER\" 2>/dev/null | grep -qi finger; then echo yes; else echo no; fi"]
     stdout: StdioCollector { id: fingerprintCheckStdout; waitForEnd: true }
@@ -390,7 +460,7 @@ Item {
 
   Process {
     id: strandedLockCheckProc
-    command: ["bash", "-c", "omarchy-hyprland-session-locked"]
+    command: ["omarchy-hyprland-session-locked"]
     onExited: function(exitCode) {
       // No output to read the lock off yet.
       if (exitCode === 2) return
@@ -405,7 +475,13 @@ Item {
 
   Process {
     id: wakeProcess
-    command: ["bash", "-c", "omarchy-system-wake"]
+    command: ["omarchy-system-wake"]
+  }
+
+  Timer {
+    id: wakeCooldownTimer
+    interval: 1000
+    repeat: false
   }
 
   Process {
@@ -431,6 +507,24 @@ Item {
       // `authenticating` here would keep the panel lit until unlock.
       if (root.lockRequested && !root.authenticatingPassword) root.runBlank()
     }
+  }
+
+  Timer {
+    id: statusRefreshTimer
+    interval: 30000
+    repeat: true
+    running: root.statusActive
+    triggeredOnStart: true
+    onTriggered: root.refreshStatus()
+  }
+
+  Timer {
+    id: clockRefreshTimer
+    interval: 1000
+    repeat: true
+    running: root.statusActive
+    triggeredOnStart: true
+    onTriggered: root.refreshClock()
   }
 
   Timer {
@@ -481,6 +575,13 @@ Item {
     if (!lockRequested) return
     if (authenticatingPassword) idleBlankTimer.stop()
     else armBlankTimer()
+  }
+
+  onStatusActiveChanged: {
+    if (statusActive) {
+      refreshClock()
+      refreshStatus()
+    }
   }
 
   FileView {

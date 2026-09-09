@@ -1,6 +1,4 @@
 import QtQuick
-import QtQuick.Effects
-import Quickshell.Io
 import qs.Commons
 import qs.Ui
 
@@ -17,13 +15,13 @@ Item {
   property bool loadBackground: true
   property string passwordText: ""
   property string userName: ""
-  property bool syncingPasswordText: false
-  property string currentTime: Qt.formatTime(new Date(), "HH:mm")
-  property string currentDate: Qt.formatDate(new Date(), "dddd, d MMMM")
   property string batteryLevel: "--"
   property string batteryState: ""
   property string wifiName: "Wi-Fi"
-  property string wifiSignal: ""
+  property bool syncingPasswordText: false
+  property string currentTime: ""
+  property string currentDate: ""
+  property double lastWakeRequestAt: 0
 
   readonly property string placeholderText: "Password"
   readonly property int fieldWidth: 140
@@ -32,6 +30,7 @@ Item {
   readonly property int fieldFontSize: Math.round(Style.font.heading * 1.125)
   readonly property int passwordDotFontSize: Math.round(Style.font.heading * 1.33)
   readonly property int passwordDotLetterSpacing: Math.round(Style.font.heading * 0.19)
+  readonly property int maximumPasswordLength: 1024
   readonly property real fingerprintReserve: fingerprintConfigured ? Math.round(fingerprintIcon.implicitWidth + 12) : 0
   readonly property real passwordDotScale: dotMetrics.advanceWidth > 0
     ? Math.min(1, (passwordInput.width - 4) / dotMetrics.advanceWidth)
@@ -68,29 +67,13 @@ Item {
     syncingPasswordText = false
   }
 
-  function refreshStatus() {
-    if (!batteryProcess.running) batteryProcess.running = true
-    if (!networkProcess.running) networkProcess.running = true
-  }
+  function requestWake() {
+    if (!inputEnabled) return
 
-  function updateBattery(output) {
-    var lines = String(output || "").split("\n")
-    for (var i = 0; i < lines.length; i++) {
-      var parts = lines[i].split("\t")
-      if (parts.length < 2) continue
-      if (parts[0] === "percentage") root.batteryLevel = parts[1]
-      if (parts[0] === "state") root.batteryState = parts[1]
-    }
-  }
-
-  function updateNetwork(output) {
-    var parts = String(output || "").trim().split("\t")
-    if (parts.length >= 2 && parts[0] === "wifi") {
-      root.wifiName = parts[1] || "Wi-Fi"
-      root.wifiSignal = parts.length >= 3 ? parts[2] + "%" : ""
-    } else {
-      root.wifiName = "Sin conexión"
-      root.wifiSignal = ""
+    var now = Date.now()
+    if (now - lastWakeRequestAt >= 1000) {
+      lastWakeRequestAt = now
+      wakeRequested()
     }
   }
 
@@ -101,42 +84,6 @@ Item {
   Component.onCompleted: {
     syncPasswordText()
     if (inputEnabled) Qt.callLater(forcePasswordFocus)
-  }
-
-  Timer {
-    interval: 1000
-    repeat: true
-    running: true
-    onTriggered: {
-      root.currentTime = Qt.formatTime(new Date(), "HH:mm")
-      root.currentDate = Qt.formatDate(new Date(), "dddd, d MMMM")
-    }
-  }
-
-  Timer {
-    interval: 10000
-    repeat: true
-    running: true
-    triggeredOnStart: true
-    onTriggered: root.refreshStatus()
-  }
-
-  Process {
-    id: batteryProcess
-    command: ["omarchy-battery-status", "--shell"]
-    stdout: StdioCollector {
-      waitForEnd: true
-      onStreamFinished: root.updateBattery(text)
-    }
-  }
-
-  Process {
-    id: networkProcess
-    command: ["omarchy-network-status"]
-    stdout: StdioCollector {
-      waitForEnd: true
-      onStreamFinished: root.updateNetwork(text)
-    }
   }
 
   TextMetrics {
@@ -170,6 +117,7 @@ Item {
       spacing: 22
 
       Text {
+        textFormat: Text.PlainText
         text: "󰤨  " + root.wifiName
         color: Color.lock.text
         font.family: "Inter"
@@ -178,6 +126,7 @@ Item {
       }
 
       Text {
+        textFormat: Text.PlainText
         text: (root.batteryState === "charging" ? "󰂄  " : "󰁹  ") + root.batteryLevel
         color: Color.lock.text
         font.family: "Inter"
@@ -189,8 +138,8 @@ Item {
     MouseArea {
       anchors.fill: parent
       hoverEnabled: true
-      onClicked: { root.wakeRequested(); root.forcePasswordFocus() }
-      onPositionChanged: root.wakeRequested()
+      onClicked: { root.requestWake(); root.forcePasswordFocus() }
+      onPositionChanged: root.requestWake()
     }
 
     Column {
@@ -202,6 +151,7 @@ Item {
 
       Text {
         anchors.horizontalCenter: parent.horizontalCenter
+        textFormat: Text.PlainText
         text: root.currentDate
         color: Color.lock.text
         font.family: "Inter"
@@ -213,6 +163,7 @@ Item {
 
       Text {
         anchors.horizontalCenter: parent.horizontalCenter
+        textFormat: Text.PlainText
         text: root.currentTime
         color: Color.lock.text
         font.family: "Inter"
@@ -225,6 +176,7 @@ Item {
 
       Text {
         anchors.horizontalCenter: parent.horizontalCenter
+        textFormat: Text.PlainText
         text: root.userName
         visible: text.length > 0
         color: Color.lock.text
@@ -262,6 +214,7 @@ Item {
         clip: true
         enabled: root.inputEnabled && !root.authenticatingPassword
         readOnly: root.authenticatingPassword
+        maximumLength: root.maximumPasswordLength
         echoMode: TextInput.Password
         passwordCharacter: "\u25CF"
         passwordMaskDelay: 0
